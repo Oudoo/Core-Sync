@@ -1,19 +1,18 @@
 /**
- * SongLoader — handles file picking, reading, and decoding to AudioBuffer.
+ * SongLoader — reads and decodes audio files.
  *
- * DECISION: Uses a hidden <input type="file"> triggered programmatically.
- * Returns the raw ArrayBuffer (for hashing) and the decoded AudioBuffer
- * (for analysis + playback).
+ * File selection is handled by the UI (Splash) using a native
+ * <label>+<input type="file"> so iOS Safari opens the picker without
+ * requiring a programmatic .click() from async context.
  */
 
 export interface LoadedSong {
-  /** Original filename without extension. */
   name: string;
-  /** Raw file bytes — kept for hashing (chart cache key). */
   rawBuffer: ArrayBuffer;
-  /** Decoded audio ready for analysis and playback. */
   audioBuffer: AudioBuffer;
 }
+
+export const ACCEPTED_EXTENSIONS = '.mp3,.wav,.ogg,.m4a,.aac,.flac,.weba';
 
 const ACCEPTED_TYPES = [
   'audio/mpeg',
@@ -26,95 +25,17 @@ const ACCEPTED_TYPES = [
   'audio/aac',
 ];
 
-const ACCEPTED_EXTENSIONS = '.mp3,.wav,.ogg,.m4a,.aac,.flac,.weba';
-
 export class SongLoader {
-  private fileInput: HTMLInputElement;
+  /** Full pipeline: read a File → decode → return LoadedSong. */
+  async loadFromFile(file: File, audioContext: AudioContext): Promise<LoadedSong> {
+    if (file.type && !ACCEPTED_TYPES.includes(file.type)) {
+      throw new Error(`Unsupported audio format: ${file.type}`);
+    }
 
-  constructor() {
-    this.fileInput = document.createElement('input');
-    this.fileInput.type = 'file';
-    this.fileInput.accept = ACCEPTED_EXTENSIONS;
-    this.fileInput.style.display = 'none';
-    document.body.appendChild(this.fileInput);
-  }
-
-  /**
-   * Open the file picker and return the selected audio file.
-   * Throws if the user cancels or the file is invalid.
-   */
-  pickFile(): Promise<File> {
-    return new Promise((resolve, reject) => {
-      const onChange = () => {
-        const file = this.fileInput.files?.[0];
-        cleanup();
-        if (!file) {
-          reject(new Error('No file selected'));
-          return;
-        }
-        // Validate type — some browsers report empty type for m4a
-        if (file.type && !ACCEPTED_TYPES.includes(file.type)) {
-          reject(new Error(`Unsupported audio format: ${file.type}`));
-          return;
-        }
-        resolve(file);
-      };
-
-      const onCancel = () => {
-        // 'cancel' event fires when the dialog is closed without selection
-        cleanup();
-        reject(new Error('File selection cancelled'));
-      };
-
-      const cleanup = () => {
-        this.fileInput.removeEventListener('change', onChange);
-        this.fileInput.removeEventListener('cancel', onCancel);
-        // Reset so the same file can be re-selected
-        this.fileInput.value = '';
-      };
-
-      this.fileInput.addEventListener('change', onChange);
-      this.fileInput.addEventListener('cancel', onCancel);
-      this.fileInput.click();
-    });
-  }
-
-  /**
-   * Read a File into an ArrayBuffer.
-   */
-  async readFile(file: File): Promise<ArrayBuffer> {
-    return file.arrayBuffer();
-  }
-
-  /**
-   * Decode an ArrayBuffer into an AudioBuffer using the given AudioContext.
-   */
-  async decode(
-    arrayBuffer: ArrayBuffer,
-    audioContext: AudioContext,
-  ): Promise<AudioBuffer> {
-    // decodeAudioData consumes the buffer, so we pass a copy
-    const copy = arrayBuffer.slice(0);
-    return audioContext.decodeAudioData(copy);
-  }
-
-  /**
-   * Full pipeline: pick → read → decode → return LoadedSong.
-   */
-  async load(audioContext: AudioContext): Promise<LoadedSong> {
-    const file = await this.pickFile();
     const name = file.name.replace(/\.[^.]+$/, '');
-
-    const rawBuffer = await this.readFile(file);
-    const audioBuffer = await this.decode(rawBuffer, audioContext);
-
+    const rawBuffer = await file.arrayBuffer();
+    // decodeAudioData mutates/consumes the buffer, pass a copy
+    const audioBuffer = await audioContext.decodeAudioData(rawBuffer.slice(0));
     return { name, rawBuffer, audioBuffer };
-  }
-
-  /**
-   * Cleanup DOM element.
-   */
-  destroy(): void {
-    this.fileInput.remove();
   }
 }

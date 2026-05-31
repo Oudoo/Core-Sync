@@ -22,7 +22,7 @@ export default defineConfig({
   },
   server: {
     host: true,
-    port: 3030,
-    open: true,
+    port: parseInt(process.env.PORT || '3030'),
+    open: false,
   },
 });

@@ -1,68 +1,32 @@
-import { Filter, GlProgram, defaultFilterVert } from 'pixi.js';
-import { ShaderSources } from '../shaders/ShaderSources';
+/**
+ * PostProcessing — lightweight visual feedback effects.
+ * All complex GLSL shaders removed: they caused silent black-screen failures
+ * on devices where WebGL2 isn't available or the FBM shader is too heavy.
+ * Effects are now CSS-based (miss flash) or PixiJS-native (lane pulse).
+ */
 
-export class FluidBackgroundFilter extends Filter {
+/** CSS-based red flash overlay shown on a miss. */
+export class MissFlash {
+  private el: HTMLDivElement;
+
   constructor() {
-    const glProgram = GlProgram.from({
-      vertex: defaultFilterVert,
-      fragment: ShaderSources.FLUID_FRAG,
-    });
-
-    super({
-      glProgram,
-      resources: {
-        fluidUniforms: {
-          uTime: { value: 0, type: 'f32' },
-          uLowEnergy: { value: 0, type: 'f32' },
-          uMidEnergy: { value: 0, type: 'f32' },
-          uHighEnergy: { value: 0, type: 'f32' },
-          uActiveEnergy: { value: 0, type: 'f32' },
-        },
-      },
-    });
+    this.el = document.createElement('div');
+    this.el.style.cssText = [
+      'position:fixed', 'inset:0', 'pointer-events:none',
+      'z-index:500', 'background:rgba(255,0,50,0)',
+      'transition:background 0.08s ease-out',
+    ].join(';');
+    document.body.appendChild(this.el);
   }
 
-  update(time: number, low: number, mid: number, high: number, active: number): void {
-    this.resources.fluidUniforms.uTime = time;
-    this.resources.fluidUniforms.uLowEnergy = low;
-    this.resources.fluidUniforms.uMidEnergy = mid;
-    this.resources.fluidUniforms.uHighEnergy = high;
-    this.resources.fluidUniforms.uActiveEnergy = active;
-  }
-}
-
-export class GlowFilter extends Filter {
-  constructor() {
-    const glProgram = GlProgram.from({
-      vertex: defaultFilterVert,
-      fragment: ShaderSources.GLOW_FRAG,
-    });
-
-    super({
-      glProgram,
-      resources: {},
-    });
-  }
-}
-
-export class ChromaticAberrationFilter extends Filter {
-  constructor() {
-    const glProgram = GlProgram.from({
-      vertex: defaultFilterVert,
-      fragment: ShaderSources.CHROMATIC_FRAG,
-    });
-
-    super({
-      glProgram,
-      resources: {
-        missUniforms: {
-          uMissIntensity: { value: 0, type: 'f32' },
-        },
-      },
-    });
+  trigger(): void {
+    this.el.style.background = 'rgba(255,0,50,0.28)';
+    setTimeout(() => {
+      this.el.style.background = 'rgba(255,0,50,0)';
+    }, 80);
   }
 
-  setIntensity(intensity: number): void {
-    this.resources.missUniforms.uMissIntensity = intensity;
+  destroy(): void {
+    this.el.remove();
   }
 }
