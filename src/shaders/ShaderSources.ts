@@ -4,27 +4,10 @@
  */
 
 export const ShaderSources = {
-  // Pass-through vertex shader
-  VERTEX_DEFAULT: `
-    precision highp float;
-    attribute vec2 aPosition;
-    attribute vec2 aUV;
-    
-    uniform mat3 uProjectionMatrix;
-    uniform mat3 uWorldTransformMatrix;
-    
-    varying vec2 vTextureCoord;
-    
-    void main() {
-      gl_Position = vec4((uProjectionMatrix * uWorldTransformMatrix * vec3(aPosition, 1.0)).xy, 0.0, 1.0);
-      vTextureCoord = aUV;
-    }
-  `,
-
   // Obsidian-Neon Audio-Reactive Fluid Fragment Shader
   FLUID_FRAG: `
-    precision highp float;
-    varying vec2 vTextureCoord;
+    in vec2 vTextureCoord;
+    out vec4 fragColor;
     
     uniform float uTime;
     uniform float uLowEnergy;
@@ -107,20 +90,20 @@ export const ShaderSources = {
       vignette = clamp(pow(16.0 * vignette, 0.4), 0.0, 1.0);
       col *= vignette;
       
-      gl_FragColor = vec4(col, 1.0);
+      fragColor = vec4(col, 1.0);
     }
   `,
 
   // Gaussian Bloom / Glow Fragment Shader
   GLOW_FRAG: `
-    precision highp float;
-    varying vec2 vTextureCoord;
-    uniform sampler2D uSampler;
+    in vec2 vTextureCoord;
+    out vec4 fragColor;
+    uniform sampler2D uTexture;
     
     // Simulating 5x5 blur kernel
     void main() {
       vec2 uv = vTextureCoord;
-      vec4 base = texture2D(uSampler, uv);
+      vec4 base = texture(uTexture, uv);
       
       float stepX = 1.8 / 512.0;
       float stepY = 1.8 / 512.0;
@@ -128,28 +111,28 @@ export const ShaderSources = {
       vec4 glow = vec4(0.0);
       
       // Simple 9-tap box filter
-      glow += texture2D(uSampler, uv + vec2(-stepX, -stepY)) * 0.08;
-      glow += texture2D(uSampler, uv + vec2(0.0, -stepY)) * 0.12;
-      glow += texture2D(uSampler, uv + vec2(stepX, -stepY)) * 0.08;
+      glow += texture(uTexture, uv + vec2(-stepX, -stepY)) * 0.08;
+      glow += texture(uTexture, uv + vec2(0.0, -stepY)) * 0.12;
+      glow += texture(uTexture, uv + vec2(stepX, -stepY)) * 0.08;
       
-      glow += texture2D(uSampler, uv + vec2(-stepX, 0.0)) * 0.12;
+      glow += texture(uTexture, uv + vec2(-stepX, 0.0)) * 0.12;
       glow += base * 0.20;
-      glow += texture2D(uSampler, uv + vec2(stepX, 0.0)) * 0.12;
+      glow += texture(uTexture, uv + vec2(stepX, 0.0)) * 0.12;
       
-      glow += texture2D(uSampler, uv + vec2(-stepX, stepY)) * 0.08;
-      glow += texture2D(uSampler, uv + vec2(0.0, stepY)) * 0.12;
-      glow += texture2D(uSampler, uv + vec2(stepX, stepY)) * 0.08;
+      glow += texture(uTexture, uv + vec2(-stepX, stepY)) * 0.08;
+      glow += texture(uTexture, uv + vec2(0.0, stepY)) * 0.12;
+      glow += texture(uTexture, uv + vec2(stepX, stepY)) * 0.08;
       
       // Output additive overlay
-      gl_FragColor = base + glow * 1.4;
+      fragColor = base + glow * 1.4;
     }
   `,
 
   // Chromatic Aberration Miss Fragment Shader
   CHROMATIC_FRAG: `
-    precision highp float;
-    varying vec2 vTextureCoord;
-    uniform sampler2D uSampler;
+    in vec2 vTextureCoord;
+    out vec4 fragColor;
+    uniform sampler2D uTexture;
     uniform float uMissIntensity; // 0.0 (no miss) to 1.0 (max aberration)
     
     void main() {
@@ -162,9 +145,9 @@ export const ShaderSources = {
       // Offset vector increases with distance from center
       vec2 offset = dir * dist * 0.042 * uMissIntensity;
       
-      float r = texture2D(uSampler, uv - offset).r;
-      float g = texture2D(uSampler, uv).g;
-      float b = texture2D(uSampler, uv + offset).b;
+      float r = texture(uTexture, uv - offset).r;
+      float g = texture(uTexture, uv).g;
+      float b = texture(uTexture, uv + offset).b;
       
       vec3 color = vec3(r, g, b);
       
@@ -172,7 +155,7 @@ export const ShaderSources = {
       float grey = dot(color, vec3(0.299, 0.587, 0.114));
       color = mix(color, vec3(grey), uMissIntensity * 0.45);
       
-      gl_FragColor = vec4(color, 1.0);
+      fragColor = vec4(color, 1.0);
     }
   `
 };

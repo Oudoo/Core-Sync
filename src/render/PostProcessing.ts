@@ -1,10 +1,10 @@
-import { Filter, GlProgram } from 'pixi.js';
+import { Filter, GlProgram, defaultFilterVert } from 'pixi.js';
 import { ShaderSources } from '../shaders/ShaderSources';
 
 export class FluidBackgroundFilter extends Filter {
   constructor() {
     const glProgram = GlProgram.from({
-      vertex: ShaderSources.VERTEX_DEFAULT,
+      vertex: defaultFilterVert,
       fragment: ShaderSources.FLUID_FRAG,
     });
 
@@ -34,7 +34,7 @@ export class FluidBackgroundFilter extends Filter {
 export class GlowFilter extends Filter {
   constructor() {
     const glProgram = GlProgram.from({
-      vertex: ShaderSources.VERTEX_DEFAULT,
+      vertex: defaultFilterVert,
       fragment: ShaderSources.GLOW_FRAG,
     });
 
@@ -48,7 +48,7 @@ export class GlowFilter extends Filter {
 export class ChromaticAberrationFilter extends Filter {
   constructor() {
     const glProgram = GlProgram.from({
-      vertex: ShaderSources.VERTEX_DEFAULT,
+      vertex: defaultFilterVert,
       fragment: ShaderSources.CHROMATIC_FRAG,
     });
 

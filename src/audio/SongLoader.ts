@@ -46,8 +46,8 @@ export class SongLoader {
   pickFile(): Promise<File> {
     return new Promise((resolve, reject) => {
       const onChange = () => {
-        cleanup();
         const file = this.fileInput.files?.[0];
+        cleanup();
         if (!file) {
           reject(new Error('No file selected'));
           return;
