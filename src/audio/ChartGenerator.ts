@@ -66,7 +66,9 @@ export class ChartGenerator {
     const subdivision = 1 / config.allowSubdivision; // e.g. Easy (1) => full beats, Normal (2) => half beats, etc.
     const stepDuration = beatInterval / subdivision;
 
-    const snappedNotesMap = new Map<string, Note>(); // Keyed by "lane:snappedTime" to prevent duplicates
+    const snappedNotesMap = new Map<string, Note>(); // Keyed by "lane:snappedTime"
+    // Track the last note time per lane to enforce per-lane cooldown spacing
+    const lastNoteTimePerLane: number[] = [-999, -999, -999, -999];
     let noteIdCounter = 0;
 
     // 3. Generate Note Types (Tap, Spark, Hold)
@@ -108,45 +110,55 @@ export class ChartGenerator {
       const fluxStrength = Math.min(1.0, maxFlux / 15.0);
 
       // --- TAP Notes (Mid frequency kicks / beats) ---
-      if (hasOnset && maxFlux > config.threshold * 5.0) {
-        // Higher threshold for double notes
-        const isDouble = rng.next() < config.simultaneousChance && maxFlux > config.threshold * 8.0;
+      // Threshold is against normalized flux (0-1), matching config.threshold directly
+      const normalizedFlux = Math.min(1.0, maxFlux / 15.0);
+      if (hasOnset && normalizedFlux > config.threshold) {
         const lane1 = this.chooseLaneForMidFrequency(maxMidEnergy, maxLowEnergy, rng);
-        
-        const note1: Note = {
-          id: `note_${noteIdCounter++}`,
-          time: stepTime,
-          type: NoteType.TAP,
-          lane: lane1,
-          duration: 0,
-          velocity: 1.0,
-          strength: fluxStrength,
-        };
-        snappedNotesMap.set(`${lane1}:${stepTime.toFixed(4)}`, note1);
 
-        if (isDouble) {
-          // Find an adjacent lane
-          let lane2 = (lane1 + 2) % 4;
-          if (lane2 === lane1) lane2 = (lane1 + 1) % 4;
-          const note2: Note = {
+        // Enforce per-lane cooldown to prevent note pile-ups
+        if (stepTime - lastNoteTimePerLane[lane1] >= config.laneCooldownS) {
+          const note1: Note = {
             id: `note_${noteIdCounter++}`,
             time: stepTime,
             type: NoteType.TAP,
-            lane: lane2,
+            lane: lane1,
             duration: 0,
             velocity: 1.0,
             strength: fluxStrength,
           };
-          snappedNotesMap.set(`${lane2}:${stepTime.toFixed(4)}`, note2);
+          snappedNotesMap.set(`${lane1}:${stepTime.toFixed(4)}`, note1);
+          lastNoteTimePerLane[lane1] = stepTime;
+
+          // Double note — only on very strong transients
+          const isDouble = rng.next() < config.simultaneousChance && normalizedFlux > config.threshold + 0.2;
+          if (isDouble) {
+            let lane2 = (lane1 + 2) % 4;
+            if (stepTime - lastNoteTimePerLane[lane2] < config.laneCooldownS) {
+              lane2 = (lane1 + 1) % 4;
+            }
+            if (stepTime - lastNoteTimePerLane[lane2] >= config.laneCooldownS) {
+              const note2: Note = {
+                id: `note_${noteIdCounter++}`,
+                time: stepTime,
+                type: NoteType.TAP,
+                lane: lane2,
+                duration: 0,
+                velocity: 1.0,
+                strength: fluxStrength,
+              };
+              snappedNotesMap.set(`${lane2}:${stepTime.toFixed(4)}`, note2);
+              lastNoteTimePerLane[lane2] = stepTime;
+            }
+          }
         }
       }
 
       // --- SPARK Notes (High frequency hats, rapid responses) ---
-      // Sparks are placed on high frequency spikes, biased toward extreme/hard difficulties
+      const normalizedHigh = Math.min(1.0, maxHighEnergy / 10.0);
       if (
         difficulty !== Difficulty.EASY &&
-        maxHighEnergy > config.threshold * 6.0 &&
-        rng.next() < (difficulty === Difficulty.EXTREME ? 0.45 : 0.25)
+        normalizedHigh > config.threshold + 0.1 &&
+        rng.next() < (difficulty === Difficulty.EXTREME ? 0.35 : 0.18)
       ) {
         // High frequency hits map to edge lanes (0 or 3)
         const lane = rng.next() < 0.5 ? 0 : 3;

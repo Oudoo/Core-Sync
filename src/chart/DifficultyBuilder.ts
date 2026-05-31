@@ -8,43 +8,49 @@ export interface DifficultyConfig {
   lookaheadS: number;
   /** Note scroll speed in seconds */
   scrollSpeedS: number;
-  /** Allow subdivision: 0.5 (half beats), 0.25 (quarter beats) */
+  /** Allow subdivision: 1=full beats, 2=half, 4=quarter */
   allowSubdivision: number;
-  /** Chance scale of generating double notes (simultaneous notes) */
+  /** Chance of generating a simultaneous (double) note */
   simultaneousChance: number;
+  /** Minimum gap in seconds before another note can land in the SAME lane */
+  laneCooldownS: number;
 }
 
 export const DifficultyConfigs: Record<Difficulty, DifficultyConfig> = {
   [Difficulty.EASY]: {
     difficulty: Difficulty.EASY,
-    threshold: 0.5,
+    threshold: 0.9,            // Only the biggest hits
     lookaheadS: 2.2,
     scrollSpeedS: 2.2,
-    allowSubdivision: 1.0, // Only place on full beats
-    simultaneousChance: 0.0, // No simultaneous notes
+    allowSubdivision: 1.0,    // Full beats only
+    simultaneousChance: 0.0,
+    laneCooldownS: 0.5,       // Half-second gap per lane — very spacious
   },
   [Difficulty.NORMAL]: {
     difficulty: Difficulty.NORMAL,
-    threshold: 0.35,
+    threshold: 0.7,            // Clear, distinct beats
     lookaheadS: 1.8,
     scrollSpeedS: 1.8,
-    allowSubdivision: 0.5, // Allow half-beats
-    simultaneousChance: 0.1, // 10% chance on high flux
+    allowSubdivision: 0.5,    // Half-beats allowed
+    simultaneousChance: 0.08,
+    laneCooldownS: 0.3,       // 300ms gap — one note per lane every ~2 beats at 120BPM
   },
   [Difficulty.HARD]: {
     difficulty: Difficulty.HARD,
-    threshold: 0.22,
+    threshold: 0.5,
     lookaheadS: 1.4,
     scrollSpeedS: 1.4,
-    allowSubdivision: 0.25, // Allow quarter-beats
-    simultaneousChance: 0.3, // 30% chance on high flux
+    allowSubdivision: 0.25,
+    simultaneousChance: 0.25,
+    laneCooldownS: 0.18,
   },
   [Difficulty.EXTREME]: {
     difficulty: Difficulty.EXTREME,
-    threshold: 0.12,
+    threshold: 0.3,
     lookaheadS: 1.1,
     scrollSpeedS: 1.1,
-    allowSubdivision: 0.25, // Full quarter subdivisions
-    simultaneousChance: 0.6, // 60% chance
+    allowSubdivision: 0.25,
+    simultaneousChance: 0.5,
+    laneCooldownS: 0.1,
   },
 };

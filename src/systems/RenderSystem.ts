@@ -55,7 +55,7 @@ export class RenderSystem {
     const w = this.game.width;
     const h = this.game.height;
     this.laneWidth = w / 4;
-    this.hitZoneY = h * 0.82;
+    this.hitZoneY = h * 0.78; // 78% — thumb-reachable on tall phones
   }
 
   /**
@@ -135,17 +135,20 @@ export class RenderSystem {
     const x = lane * this.laneWidth + this.laneWidth / 2;
     const color = LANE_COLORS[lane];
 
-    // Outer ring glow
-    pad.circle(x, this.hitZoneY, 28 * scale);
-    pad.stroke({ width: 2, color, alpha: 0.55 });
+    // Outer glow halo (only at base scale)
+    if (scale <= 1.05) {
+      pad.circle(x, this.hitZoneY, 38);
+      pad.fill({ color, alpha: 0.06 });
+    }
 
-    // Inner pad
-    pad.circle(x, this.hitZoneY, 18 * scale);
-    pad.fill({ color, alpha: 0.15 });
+    // Main filled ring — very visible tap target
+    pad.circle(x, this.hitZoneY, 26 * scale);
+    pad.fill({ color, alpha: 0.22 });
+    pad.stroke({ width: 3, color, alpha: 0.9 });
 
-    // Bright center dot
-    pad.circle(x, this.hitZoneY, 5);
-    pad.fill({ color, alpha: 0.8 });
+    // Inner solid core
+    pad.circle(x, this.hitZoneY, 10 * scale);
+    pad.fill({ color, alpha: 0.95 });
   }
 
   pulseLane(lane: number): void {

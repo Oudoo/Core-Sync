@@ -52,7 +52,7 @@ export class NoteEntity extends Container {
     this.glow.clear();
     this.holdTail!.clear();
 
-    const size = this.noteData.type === NoteType.SPARK ? 12 : 20;
+    const size = this.noteData.type === NoteType.SPARK ? 10 : 16;
     let neonColor = 0x00ffff; // TAP = Cyan neon
 
     if (this.noteData.type === NoteType.HOLD) {
@@ -61,18 +61,18 @@ export class NoteEntity extends Container {
       neonColor = 0xffcc00; // SPARK = Gold neon
     }
 
-    // 1. Draw Glow Aura
-    this.glow.circle(0, 0, size * 2.2);
-    this.glow.fill({ color: neonColor, alpha: 0.15 });
+    // 1. Draw Glow Aura (smaller — 1.5x not 2.2x to avoid lane bleed)
+    this.glow.circle(0, 0, size * 1.5);
+    this.glow.fill({ color: neonColor, alpha: 0.18 });
 
-    // 2. Draw Core Orb (liquid-mercury core)
+    // 2. Draw Core Orb
     this.body.circle(0, 0, size);
     this.body.fill({ color: 0xffffff });
-    this.body.stroke({ width: 3.5, color: neonColor });
+    this.body.stroke({ width: 3, color: neonColor });
 
     // Inner bright core
-    this.body.circle(0, 0, size * 0.45);
-    this.body.fill({ color: neonColor, alpha: 0.7 });
+    this.body.circle(0, 0, size * 0.42);
+    this.body.fill({ color: neonColor, alpha: 0.85 });
 
     // 3. Draw Hold Tail
     if (this.noteData.type === NoteType.HOLD && this.noteData.duration > 0) {
