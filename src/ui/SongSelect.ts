@@ -292,14 +292,14 @@ export class SongSelect {
     if (this.songsList.length === 0) {
       this.tracksContainerEl.innerHTML = `
         <div style="color:#8899aa; text-align:center; padding:2rem; font-size:0.9rem;">
-          No songs loaded. Please upload a song from the main page.
+          No songs loaded. Upload a song to start.
         </div>
       `;
       return;
     }
 
     this.tracksContainerEl.innerHTML = '';
-    
+
     this.songsList.forEach((song, idx) => {
       const activeClass = idx === this.selectedSongIndex ? 'active' : '';
       const min = Math.floor(song.duration / 60);
@@ -312,15 +312,40 @@ export class SongSelect {
           <span class="track-name">${song.name}</span>
           <span class="track-meta">${min}:${sec} · ${song.bpm} BPM</span>
         </div>
+        <button class="track-delete-btn" title="Remove song" data-id="${song.id}">✕</button>
       `;
 
-      card.addEventListener('click', () => {
+      // Add style for delete button if not already present
+      if (!document.getElementById('track-delete-style')) {
+        const s = document.createElement('style');
+        s.id = 'track-delete-style';
+        s.textContent = `
+          .track-card { position: relative; }
+          .track-delete-btn {
+            background: rgba(255,50,50,.08); border: 1px solid rgba(255,50,50,.2);
+            color: rgba(255,100,100,.6); border-radius: 6px;
+            width: 28px; height: 28px; font-size: .75rem; cursor: pointer;
+            flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+            transition: all .2s;
+          }
+          .track-delete-btn:hover { background:rgba(255,50,50,.2); color:#ff4444; }
+        `;
+        document.head.appendChild(s);
+      }
+
+      card.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('.track-delete-btn')) return;
         const cards = this.tracksContainerEl.querySelectorAll('.track-card');
         cards.forEach((c) => c.classList.remove('active'));
         card.classList.add('active');
-        
         this.selectedSongIndex = idx;
         this.updateHighscoreDisplay();
+      });
+
+      const delBtn = card.querySelector('.track-delete-btn') as HTMLButtonElement;
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.eventBus.emit('songselect:delete', song.id);
       });
 
       this.tracksContainerEl.appendChild(card);

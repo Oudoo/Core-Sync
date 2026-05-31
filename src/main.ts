@@ -4,6 +4,7 @@ import { eventBus } from './core/EventBus';
 import { SongLoader } from './audio/SongLoader';
 import { AudioAnalyzer } from './audio/AudioAnalyzer';
 import { ChartGenerator } from './audio/ChartGenerator';
+import { SongStore, SongMeta } from './storage/SongStore';
 import { Splash } from './ui/Splash';
 import { SongSelect, SelectedSong } from './ui/SongSelect';
 import { ProcessingScreen } from './ui/ProcessingScreen';
@@ -21,8 +22,16 @@ import { ParticlePool } from './pool/ParticlePool';
 import { NoteType } from './chart/Note';
 
 async function bootstrap(): Promise<void> {
-  const game = new Game();
+  // ── IndexedDB store (open before anything else) ──
+  const store = new SongStore();
+  try {
+    await store.open();
+  } catch (err) {
+    console.warn('[CORE SYNC] IndexedDB unavailable — songs will not persist:', err);
+  }
 
+  // ── Pixi application ──
+  const game = new Game();
   try {
     await game.init();
     console.log(
@@ -38,11 +47,11 @@ async function bootstrap(): Promise<void> {
 
   const songLoader = new SongLoader();
   const analyzer = new AudioAnalyzer();
+  const missFlash = new MissFlash();
 
   const splash = new Splash();
   const songSelect = new SongSelect(screenParent, eventBus);
   const processing = new ProcessingScreen();
-  const missFlash = new MissFlash();
 
   let calibration: Calibration | null = null;
   let hud: HUD | null = null;
@@ -54,56 +63,95 @@ async function bootstrap(): Promise<void> {
   let renderSystem: RenderSystem | null = null;
   let particlePool: ParticlePool | null = null;
 
+  // In-memory song list (populated from DB on start + new uploads)
   const songsList: SelectedSong[] = [];
   let currentSong: SelectedSong | null = null;
   let currentDifficulty = 'normal';
   let activeChart: any = null;
   let isGameplayActive = false;
 
-  // ── Upload flow ──
-  // File is selected via native <label>+<input> in Splash — no .click() needed.
-  // AudioContext is created synchronously here; the `change` event IS a user gesture on iOS.
+  // ── Load library from IndexedDB on startup ──
+  try {
+    const metas = await store.listMeta();
+    for (const meta of metas) {
+      // Push a stub — AudioBuffer and featureMap loaded lazily on play
+      songsList.push(metaToSelectedSong(meta));
+    }
+    if (songsList.length > 0) {
+      songSelect.setSongs(songsList);
+    }
+    splash.setSavedCount(songsList.length);
+  } catch (err) {
+    console.warn('[CORE SYNC] Could not load library:', err);
+  }
 
+  /** Convert a stored meta into the in-memory SelectedSong shape. */
+  function metaToSelectedSong(meta: SongMeta): SelectedSong {
+    // AudioBuffer + featureMap are loaded lazily just before gameplay starts
+    return {
+      id: meta.id,
+      name: meta.name,
+      bpm: meta.bpm,
+      duration: meta.duration,
+      buffer: null as any, // populated on play
+    } as SelectedSong & { _meta: SongMeta };
+  }
+
+  // ── Upload new song ──
   eventBus.on('splash:fileSelected', async (file: File) => {
     try {
-      // 1. Create AudioContext synchronously from user gesture (file change event)
       const audioCtx = await game.ensureAudioContext();
-
-      if (!calibration) {
-        calibration = new Calibration(screenParent, eventBus, audioCtx);
-      }
+      if (!calibration) calibration = new Calibration(screenParent, eventBus, audioCtx);
 
       splash.hide();
       processing.show();
-      processing.setStatus('Analyzing audio spectrum...');
+      processing.setStatus('Reading file...');
 
       const songData = await songLoader.loadFromFile(file, audioCtx);
 
+      processing.setStatus('Analyzing audio spectrum...');
       const featureMap = await analyzer.analyze(songData.audioBuffer, (p) => {
         processing.setProgress(p);
       });
 
+      processing.setStatus('Generating chart...');
       const tempChart = ChartGenerator.generate(
-        songData.name,
-        songData.rawBuffer,
-        featureMap,
-        songData.audioBuffer.sampleRate,
-        'normal' as any,
+        songData.name, songData.rawBuffer, featureMap,
+        songData.audioBuffer.sampleRate, 'normal' as any,
       );
 
+      const id = `song_${Date.now()}`;
+      const meta: SongMeta = {
+        id,
+        name: songData.name,
+        bpm: tempChart.bpm,
+        duration: songData.audioBuffer.duration,
+        sampleRate: songData.audioBuffer.sampleRate,
+        addedAt: Date.now(),
+      };
+
+      // Persist to IndexedDB
+      processing.setStatus('Saving to library...');
+      try {
+        await store.save(meta, songData.rawBuffer, featureMap);
+      } catch (err) {
+        console.warn('[CORE SYNC] Could not save to IndexedDB:', err);
+      }
+
+      // Build in-memory entry with fully-loaded data attached
       const song: SelectedSong = {
-        id: `song_${Date.now()}`,
+        id,
         name: songData.name,
         bpm: tempChart.bpm,
         duration: songData.audioBuffer.duration,
         buffer: songData.audioBuffer,
       };
-
-      (song.buffer as any).featureMap = featureMap;
-      (song.buffer as any).fileBuffer = songData.rawBuffer;
+      (song as any)._featureMap = featureMap;
+      (song as any)._rawBuffer = songData.rawBuffer;
 
       songsList.push(song);
       songSelect.setSongs(songsList);
+      splash.setSavedCount(songsList.length);
 
       processing.hide();
       songSelect.show();
@@ -114,13 +162,30 @@ async function bootstrap(): Promise<void> {
     }
   });
 
-  // ── Settings & Calibration ──
+  // ── Open library from splash (songs already listed in songSelect) ──
+  eventBus.on('splash:openLibrary', () => {
+    splash.hide();
+    songSelect.show();
+  });
 
+  // ── Delete a song from library ──
+  eventBus.on('songselect:delete', async (id: string) => {
+    const idx = songsList.findIndex((s) => s.id === id);
+    if (idx === -1) return;
+    songsList.splice(idx, 1);
+    try { await store.remove(id); } catch { /* ignore */ }
+    localStorage.removeItem(`core-sync:score:${id}:easy`);
+    localStorage.removeItem(`core-sync:score:${id}:normal`);
+    localStorage.removeItem(`core-sync:score:${id}:hard`);
+    localStorage.removeItem(`core-sync:score:${id}:extreme`);
+    songSelect.setSongs(songsList);
+    splash.setSavedCount(songsList.length);
+  });
+
+  // ── Calibration ──
   eventBus.on('songselect:calibration', async () => {
     const audioCtx = await game.ensureAudioContext();
-    if (!calibration) {
-      calibration = new Calibration(screenParent, eventBus, audioCtx);
-    }
+    if (!calibration) calibration = new Calibration(screenParent, eventBus, audioCtx);
     songSelect.hide();
     calibration.show();
   });
@@ -135,8 +200,7 @@ async function bootstrap(): Promise<void> {
     splash.show();
   });
 
-  // ── Gameplay start ──
-
+  // ── Start gameplay ──
   eventBus.on('songselect:play', async ({ song, difficulty }) => {
     currentSong = song;
     currentDifficulty = difficulty;
@@ -144,23 +208,44 @@ async function bootstrap(): Promise<void> {
     await launchGameplay();
   });
 
+  /**
+   * Ensure the song has a live AudioBuffer + featureMap.
+   * Songs loaded from the library DB are stubs until this is called.
+   */
+  async function ensureSongLoaded(song: SelectedSong): Promise<void> {
+    if (song.buffer) return; // already loaded
+    processing.show();
+    processing.setStatus('Loading song from library...');
+    const audioCtx = await game.ensureAudioContext();
+    const full = await store.loadFull(song.id);
+    if (!full) throw new Error(`Song ${song.id} not found in store`);
+    const audioBuffer = await audioCtx.decodeAudioData(full.rawBuffer.slice(0));
+    song.buffer = audioBuffer;
+    (song as any)._featureMap = full.featureMap;
+    (song as any)._rawBuffer = full.rawBuffer;
+    processing.hide();
+  }
+
   async function launchGameplay() {
     if (!currentSong) return;
 
-    const audioCtx = await game.ensureAudioContext();
+    try {
+      await ensureSongLoaded(currentSong);
+    } catch (err) {
+      console.error('[CORE SYNC] Could not load song for play:', err);
+      songSelect.show();
+      return;
+    }
 
-    const featureMap = (currentSong.buffer as any).featureMap;
-    const fileBuffer = (currentSong.buffer as any).fileBuffer;
+    const audioCtx = await game.ensureAudioContext();
+    const featureMap = (currentSong as any)._featureMap;
+    const rawBuffer = (currentSong as any)._rawBuffer;
 
     activeChart = ChartGenerator.generate(
-      currentSong.name,
-      fileBuffer,
-      featureMap,
-      currentSong.buffer.sampleRate,
-      currentDifficulty as any,
+      currentSong.name, rawBuffer, featureMap,
+      currentSong.buffer.sampleRate, currentDifficulty as any,
     );
 
-    // Gameplay container — no stage-level filters (they black out everything on WebGL1)
     const gameplayContainer = new Container();
     game.app.stage.addChild(gameplayContainer);
 
@@ -174,57 +259,41 @@ async function bootstrap(): Promise<void> {
     inputSystem = new InputSystem(game.app.canvas as HTMLCanvasElement, eventBus);
     particlePool = new ParticlePool(gameplayContainer);
 
-    if (!hud) {
-      hud = new HUD(screenParent, eventBus);
-    }
+    if (!hud) hud = new HUD(screenParent, eventBus);
     hud.show();
 
     isGameplayActive = true;
-
-    setTimeout(() => {
-      if (audioSystem) audioSystem.play(0);
-    }, 800);
+    setTimeout(() => { if (audioSystem) audioSystem.play(0); }, 800);
   }
 
-  // ── Note hit judgment ──
-
-  eventBus.on('input:down', ({ lane, time: _time }) => {
+  // ── Input / judgment ──
+  eventBus.on('input:down', ({ lane }) => {
     if (!isGameplayActive || !renderSystem || !scoringSystem || !audioSystem || !particlePool) return;
-
     const songTime = game.clock.songTime;
-    const noteEntity = renderSystem.getClosestActiveNote(lane, songTime);
+    const entity = renderSystem.getClosestActiveNote(lane, songTime);
 
-    if (noteEntity) {
-      const note = noteEntity.noteData;
-
+    if (entity) {
+      const note = entity.noteData;
       if (note.type === NoteType.TAP) {
-        const judgment = scoringSystem.judgeNote(note, songTime);
-        noteEntity.isHit = true;
-        if (judgment !== 'miss') {
-          let color = 0x00ffff;
-          if (judgment === 'great') color = 0x00ff88;
-          else if (judgment === 'good') color = 0xffcc00;
-          particlePool.spawnBurst(noteEntity.x, noteEntity.y, color, 18);
+        const j = scoringSystem.judgeNote(note, songTime);
+        entity.isHit = true;
+        if (j !== 'miss') {
+          const color = j === 'perfect' ? 0x00ffff : j === 'great' ? 0x00ff88 : 0xffcc00;
+          particlePool.spawnBurst(entity.x, entity.y, color, 18);
           renderSystem.pulseLane(lane);
-        } else {
-          triggerMiss();
-        }
+        } else { missFlash.trigger(); }
       } else if (note.type === NoteType.SPARK) {
-        const diffMs = Math.abs(songTime - note.time) * 1000;
-        if (diffMs <= 60) {
+        if (Math.abs(songTime - note.time) * 1000 <= 60) {
           scoringSystem.registerHit('perfect');
-          noteEntity.isHit = true;
-          particlePool.spawnBurst(noteEntity.x, noteEntity.y, 0xffcc00, 24);
+          entity.isHit = true;
+          particlePool.spawnBurst(entity.x, entity.y, 0xffcc00, 24);
           renderSystem.pulseLane(lane);
         } else {
-          scoringSystem.registerMiss();
-          noteEntity.isMissed = true;
-          triggerMiss();
+          scoringSystem.registerMiss(); entity.isMissed = true; missFlash.trigger();
         }
       } else if (note.type === NoteType.HOLD) {
-        const diffMs = Math.abs(songTime - note.time) * 1000;
-        if (diffMs <= 150) {
-          noteEntity.holdPressed = true;
+        if (Math.abs(songTime - note.time) * 1000 <= 150) {
+          entity.holdPressed = true;
           scoringSystem.registerHit('perfect');
           renderSystem.pulseLane(lane);
         }
@@ -239,52 +308,39 @@ async function bootstrap(): Promise<void> {
     const songTime = game.clock.songTime;
     for (let i = 0; i < 4; i++) {
       if (inputSystem.isLaneHeld(i)) {
-        const activeHold = renderSystem.getClosestActiveNote(i, songTime);
-        if (activeHold && activeHold.noteData.type === NoteType.HOLD && activeHold.holdPressed) {
-          const note = activeHold.noteData;
-          if (songTime >= note.time && songTime <= note.time + note.duration) {
+        const h = renderSystem.getClosestActiveNote(i, songTime);
+        if (h && h.noteData.type === NoteType.HOLD && h.holdPressed) {
+          const n = h.noteData;
+          if (songTime >= n.time && songTime <= n.time + n.duration) {
             scoringSystem.registerHit('perfect');
-            activeHold.holdProgress = (songTime - note.time) / note.duration;
-            particlePool?.spawnBurst(activeHold.x, activeHold.y, 0xff00ff, 1);
+            h.holdProgress = (songTime - n.time) / n.duration;
+            particlePool?.spawnBurst(h.x, h.y, 0xff00ff, 1);
           }
         }
       }
     }
   }
 
-  function triggerMiss() {
-    missFlash.trigger();
-  }
-
   eventBus.on('score:judgment', ({ judgment }) => {
-    if (judgment === 'miss') triggerMiss();
+    if (judgment === 'miss') missFlash.trigger();
   });
-
-  // ── Pause ──
 
   eventBus.on('gameplay:pause', () => {
     if (!isGameplayActive || !audioSystem) return;
-    if (audioSystem.active) audioSystem.pause();
-    else audioSystem.resume();
+    if (audioSystem.active) audioSystem.pause(); else audioSystem.resume();
   });
 
-  // ── Main game loop ──
-
+  // ── Game loop ──
   eventBus.on('game:update', (_dt) => {
     if (!isGameplayActive || !renderSystem || !audioSystem || !scoringSystem || !particlePool) return;
 
     scoringSystem.updateDecay();
     checkHoldSustains();
-
-    renderSystem.update(activeChart, () => {
-      scoringSystem!.registerMiss();
-    });
-
+    renderSystem.update(activeChart, () => { scoringSystem!.registerMiss(); });
     particlePool.update();
 
-    // Audio-reactive lane glow (already 0-1)
-    const energy = audioSystem.getRealtimeEnergy();
-    renderSystem.setLaneGlow(energy.low, energy.mid, energy.high);
+    const e = audioSystem.getRealtimeEnergy();
+    renderSystem.setLaneGlow(e.low, e.mid, e.high);
 
     if (audioSystem.currentTime >= audioSystem.duration && audioSystem.duration > 0) {
       concludeGameplay();
@@ -292,11 +348,18 @@ async function bootstrap(): Promise<void> {
   });
 
   // ── End of song ──
-
   function concludeGameplay() {
     isGameplayActive = false;
     if (hud) hud.hide();
     const stats = scoringSystem!.stats;
+
+    // Persist high score
+    if (currentSong) {
+      const key = `core-sync:score:${currentSong.id}:${currentDifficulty}`;
+      const prev = parseInt(localStorage.getItem(key) || '0', 10);
+      if (stats.score > prev) localStorage.setItem(key, String(stats.score));
+    }
+
     cleanGameplayLayers();
     if (!results) results = new Results(screenParent, eventBus);
     results.setStats(stats, currentSong!.id, currentDifficulty);
@@ -309,8 +372,6 @@ async function bootstrap(): Promise<void> {
     if (inputSystem) { inputSystem.destroy(); inputSystem = null; }
     if (renderSystem) { renderSystem.destroy(); renderSystem = null; }
     if (particlePool) { particlePool.destroy(); particlePool = null; }
-
-    // Remove all stage children except the permanent FPS text
     for (let i = game.app.stage.children.length - 1; i >= 0; i--) {
       const child = game.app.stage.children[i];
       if (child !== (game as any).fpsText) {
@@ -320,15 +381,8 @@ async function bootstrap(): Promise<void> {
     }
   }
 
-  eventBus.on('results:menu', () => {
-    if (results) results.hide();
-    songSelect.show();
-  });
-
-  eventBus.on('results:replay', async () => {
-    if (results) results.hide();
-    await launchGameplay();
-  });
+  eventBus.on('results:menu', () => { if (results) results.hide(); songSelect.show(); });
+  eventBus.on('results:replay', async () => { if (results) results.hide(); await launchGameplay(); });
 }
 
 bootstrap();
